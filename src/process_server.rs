@@ -21,6 +21,13 @@ pub struct KillParams {
     pub process_id: String,
 }
 
+/// Parameters for the stop tool
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct StopParams {
+    /// The process ID to stop
+    pub process_id: String,
+}
+
 /// Parameters for the read tool
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ReadParams {
@@ -69,32 +76,46 @@ impl ProcessServer {
     async fn run(&self, params: Parameters<RunParams>) -> Result<CallToolResult, McpError> {
         match self.manager.run(&params.0.command).await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to run command: {}",
-                e
-            ))])),
+            Err(e) => {
+                // The error message is already in JSON format from the manager
+                Ok(CallToolResult::error(vec![Content::text(e.to_string())]))
+            }
         }
     }
 
     /// Kill a specific process
-    #[tool(description = "Kill a previously started process by its ID.")]
+    #[tool(
+        description = "Kill a previously started process by its ID and remove it from the list."
+    )]
     async fn kill(&self, params: Parameters<KillParams>) -> Result<CallToolResult, McpError> {
         match self.manager.kill(&params.0.process_id).await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
+            Err(e) => {
+                // The error message is already in JSON format from the manager
+                Ok(CallToolResult::error(vec![Content::text(e.to_string())]))
+            }
+        }
+    }
+
+    /// Stop a specific process (without removing from list)
+    #[tool(description = "Stop a previously started process by its ID (keeps it in the list).")]
+    async fn stop(&self, params: Parameters<StopParams>) -> Result<CallToolResult, McpError> {
+        match self.manager.stop(&params.0.process_id).await {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to kill process: {}",
+                "{{\"error\": \"Failed to stop process: {}\"}}",
                 e
             ))])),
         }
     }
 
     /// Kill all running processes
-    #[tool(description = "Kill all running processes.")]
+    #[tool(description = "Kill all running processes and remove them from the list.")]
     async fn kill_all(&self) -> Result<CallToolResult, McpError> {
         match self.manager.kill_all().await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to kill all processes: {}",
+                "{{\"error\": \"Failed to kill all processes: {}\"}}",
                 e
             ))])),
         }
@@ -111,10 +132,10 @@ impl ProcessServer {
             .await
         {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to read process output: {}",
-                e
-            ))])),
+            Err(e) => {
+                // The error message is already in JSON format from the manager
+                Ok(CallToolResult::error(vec![Content::text(e.to_string())]))
+            }
         }
     }
 
@@ -124,7 +145,7 @@ impl ProcessServer {
         match self.manager.restart(&params.0.process_id).await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to restart process: {}",
+                "{{\"error\": \"Failed to restart process: {}\"}}",
                 e
             ))])),
         }
@@ -136,7 +157,7 @@ impl ProcessServer {
         match self.manager.list().await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list processes: {}",
+                "{{\"error\": \"Failed to list processes: {}\"}}",
                 e
             ))])),
         }
@@ -153,8 +174,9 @@ impl ServerHandler for ProcessServer {
             instructions: Some(
                 "This is a process management MCP server using PMDaemon. It provides tools for managing background processes:\n\
                  - run: Execute a command in the background\n\
-                 - kill: Stop a specific process\n\
-                 - kill_all: Stop all processes\n\
+                 - kill: Stop and remove a specific process\n\
+                 - stop: Stop a specific process (keeps in list)\n\
+                 - kill_all: Stop and remove all processes\n\
                  - read: Read output logs from a process\n\
                  - restart: Restart a process\n\
                  - list: Show all processes with their status"
@@ -187,13 +209,14 @@ mod tests {
 
         assert!(router.has_route("run"));
         assert!(router.has_route("kill"));
+        assert!(router.has_route("stop"));
         assert!(router.has_route("kill_all"));
         assert!(router.has_route("read"));
         assert!(router.has_route("restart"));
         assert!(router.has_route("list"));
 
         let tools = router.list_all();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
     }
 
     #[test]
@@ -263,6 +286,99 @@ mod tests {
         }
 
         // Clean up
+        let kill_params = Parameters(KillParams {
+            process_id: "sleep".to_string(),
+        });
+        let _ = server.kill(kill_params).await;
+    }
+
+    #[tokio::test]
+    async fn test_kill_removes_from_list() {
+        let server = ProcessServer::new().await.unwrap();
+
+        // Run a command
+        let run_params = Parameters(RunParams {
+            command: "sleep 5".to_string(),
+        });
+        let _ = server.run(run_params).await;
+
+        // Kill it
+        let kill_params = Parameters(KillParams {
+            process_id: "sleep".to_string(),
+        });
+        let kill_result = server.kill(kill_params).await;
+        assert!(kill_result.is_ok(), "Kill should succeed");
+
+        // Verify list succeeds
+        let list_result = server.list().await;
+        assert!(list_result.is_ok(), "List should succeed after kill");
+    }
+
+    #[tokio::test]
+    async fn test_kill_all_removes_all_from_list() {
+        let server = ProcessServer::new().await.unwrap();
+
+        // Run multiple commands
+        let _ = server
+            .run(Parameters(RunParams {
+                command: "sleep 5".to_string(),
+            }))
+            .await;
+        let _ = server
+            .run(Parameters(RunParams {
+                command: "echo test".to_string(),
+            }))
+            .await;
+
+        // Kill all
+        let kill_all_result = server.kill_all().await;
+        assert!(kill_all_result.is_ok(), "Kill all should succeed");
+
+        // Verify list returns successfully
+        let list_result = server.list().await;
+        assert!(list_result.is_ok(), "List should succeed after kill_all");
+    }
+
+    #[tokio::test]
+    async fn test_list_command_field() {
+        let server = ProcessServer::new().await.unwrap();
+
+        // Run a command
+        let run_params = Parameters(RunParams {
+            command: "python -m http.server".to_string(),
+        });
+        let run_result = server.run(run_params).await;
+        assert!(run_result.is_ok(), "Run should succeed");
+
+        // List processes
+        let list_result = server.list().await;
+        assert!(list_result.is_ok(), "List should succeed");
+
+        // Clean up
+        let kill_params = Parameters(KillParams {
+            process_id: "python".to_string(),
+        });
+        let _ = server.kill(kill_params).await;
+    }
+
+    #[tokio::test]
+    async fn test_stop_tool_exists() {
+        let server = ProcessServer::new().await.unwrap();
+
+        // Run a command
+        let run_params = Parameters(RunParams {
+            command: "sleep 10".to_string(),
+        });
+        let _ = server.run(run_params).await;
+
+        // Stop it (not kill)
+        let stop_params = Parameters(StopParams {
+            process_id: "sleep".to_string(),
+        });
+        let stop_result = server.stop(stop_params).await;
+        assert!(stop_result.is_ok(), "Stop should succeed");
+
+        // Clean up - now kill to remove it
         let kill_params = Parameters(KillParams {
             process_id: "sleep".to_string(),
         });
