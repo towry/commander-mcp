@@ -113,7 +113,6 @@ impl ProcessManager {
                 // Store the command for later retrieval
                 let mut commands = self.commands.lock().await;
                 commands.insert(process_id.clone(), command.to_string());
-                drop(commands);
 
                 let response = RunResponse {
                     process_id: process_id.clone(),
