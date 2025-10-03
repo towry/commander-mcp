@@ -125,8 +125,14 @@ Execute a command in the background.
 }
 ```
 
-**Response**:
-Returns a process ID generated from the command (e.g., `npm_run`).
+**Response** (JSON):
+```json
+{
+  "process_id": "npm_run",
+  "command": "npm run dev",
+  "message": "Started process 'npm_run'"
+}
+```
 
 ### kill
 
@@ -142,6 +148,14 @@ Kill a previously started process by its ID.
 }
 ```
 
+**Response** (JSON):
+```json
+{
+  "process_id": "npm_run",
+  "message": "Stopped process 'npm_run'"
+}
+```
+
 ### kill_all
 
 Kill all running processes.
@@ -149,6 +163,14 @@ Kill all running processes.
 **Parameters**: None
 
 **Example**: Call with no parameters to stop all processes.
+
+**Response** (JSON):
+```json
+{
+  "stopped_count": 3,
+  "message": "Stopped 3 process(es)"
+}
+```
 
 ### read
 
@@ -168,8 +190,13 @@ Read the stdout output from a process by its ID.
 }
 ```
 
-**Response**:
-Returns the recent output from the process log file.
+**Response** (JSON):
+```json
+{
+  "process_id": "npm_run",
+  "logs": "... log output here ..."
+}
+```
 
 ### restart
 
@@ -185,13 +212,38 @@ Restart a previously run process by its ID.
 }
 ```
 
+**Response** (JSON):
+```json
+{
+  "process_id": "npm_run",
+  "message": "Restarted process 'npm_run'"
+}
+```
+
 ### list
 
 List all currently running or stopped processes.
 
 **Parameters**: None
 
-**Response**:
+**Response** (JSON):
+```json
+{
+  "processes": [
+    {
+      "name": "npm_run",
+      "status": "running",
+      "pid": 12345,
+      "started_at": "2025-10-03 17:14:55 UTC",
+      "uptime_seconds": 120,
+      "restarts": 0,
+      "cpu_usage": 2.5,
+      "memory_mb": 45
+    }
+  ]
+}
+```
+
 Returns a list of all processes with their status, PID, started_at timestamp, uptime, CPU usage, memory usage, and restart count.
 
 ## How It Works

@@ -1,7 +1,63 @@
 use anyhow::{anyhow, Context, Result};
 use pmdaemon::{ProcessConfig, ProcessManager as PmDaemon};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Response for the run command
+#[derive(Serialize, Deserialize)]
+struct RunResponse {
+    process_id: String,
+    command: String,
+    message: String,
+}
+
+/// Response for the kill command
+#[derive(Serialize, Deserialize)]
+struct KillResponse {
+    process_id: String,
+    message: String,
+}
+
+/// Response for the kill_all command
+#[derive(Serialize, Deserialize)]
+struct KillAllResponse {
+    stopped_count: usize,
+    message: String,
+}
+
+/// Response for the read command
+#[derive(Serialize, Deserialize)]
+struct ReadResponse {
+    process_id: String,
+    logs: String,
+}
+
+/// Response for the restart command
+#[derive(Serialize, Deserialize)]
+struct RestartResponse {
+    process_id: String,
+    message: String,
+}
+
+/// Process information for the list command
+#[derive(Serialize, Deserialize)]
+struct ProcessInfo {
+    name: String,
+    status: String,
+    pid: u32,
+    started_at: String,
+    uptime_seconds: i64,
+    restarts: u32,
+    cpu_usage: f64,
+    memory_mb: u64,
+}
+
+/// Response for the list command
+#[derive(Serialize, Deserialize)]
+struct ListResponse {
+    processes: Vec<ProcessInfo>,
+}
 
 #[derive(Clone)]
 pub struct ProcessManager {
@@ -43,10 +99,14 @@ impl ProcessManager {
 
         // Try to start the process, but provide a helpful error if it already exists
         match daemon.start(config).await {
-            Ok(_) => Ok(format!(
-                "Started process '{}' with command: {}",
-                process_id, command
-            )),
+            Ok(_) => {
+                let response = RunResponse {
+                    process_id: process_id.clone(),
+                    command: command.to_string(),
+                    message: format!("Started process '{}'", process_id),
+                };
+                Ok(serde_json::to_string(&response)?)
+            }
             Err(e) => {
                 let error_msg = e.to_string();
                 // Check if the error is because the process already exists
@@ -70,7 +130,11 @@ impl ProcessManager {
             .await
             .context(format!("Failed to stop process '{}'", process_id))?;
 
-        Ok(format!("Stopped process '{}'", process_id))
+        let response = KillResponse {
+            process_id: process_id.to_string(),
+            message: format!("Stopped process '{}'", process_id),
+        };
+        Ok(serde_json::to_string(&response)?)
     }
 
     /// Kill all running processes
@@ -87,7 +151,11 @@ impl ProcessManager {
             }
         }
 
-        Ok(format!("Stopped {} process(es)", stopped_count))
+        let response = KillAllResponse {
+            stopped_count,
+            message: format!("Stopped {} process(es)", stopped_count),
+        };
+        Ok(serde_json::to_string(&response)?)
     }
 
     /// Read output from a process
@@ -97,11 +165,11 @@ impl ProcessManager {
         // Use get_logs method to retrieve log output
         match daemon.get_logs(process_id, lines).await {
             Ok(logs) => {
-                if logs.is_empty() {
-                    Ok(format!("No output available for process '{}'", process_id))
-                } else {
-                    Ok(logs)
-                }
+                let response = ReadResponse {
+                    process_id: process_id.to_string(),
+                    logs: if logs.is_empty() { String::new() } else { logs },
+                };
+                Ok(serde_json::to_string(&response)?)
             }
             Err(e) => Err(anyhow!(
                 "Failed to read logs for process '{}': {}",
@@ -119,7 +187,11 @@ impl ProcessManager {
             .await
             .context(format!("Failed to restart process '{}'", process_id))?;
 
-        Ok(format!("Restarted process '{}'", process_id))
+        let response = RestartResponse {
+            process_id: process_id.to_string(),
+            message: format!("Restarted process '{}'", process_id),
+        };
+        Ok(serde_json::to_string(&response)?)
     }
 
     /// List all processes
@@ -127,50 +199,50 @@ impl ProcessManager {
         let daemon = self.daemon.lock().await;
         let processes = daemon.list().await?;
 
-        if processes.is_empty() {
-            return Ok("No processes running".to_string());
-        }
+        let process_infos: Vec<ProcessInfo> = processes
+            .into_iter()
+            .map(|process| {
+                let status = match process.state {
+                    pmdaemon::ProcessState::Online => "running",
+                    pmdaemon::ProcessState::Stopped => "stopped",
+                    pmdaemon::ProcessState::Errored => "errored",
+                    pmdaemon::ProcessState::Starting => "starting",
+                    pmdaemon::ProcessState::Stopping => "stopping",
+                    pmdaemon::ProcessState::Restarting => "restarting",
+                };
 
-        let mut result = String::from("Processes:\n");
-        for process in processes {
-            let status = match process.state {
-                pmdaemon::ProcessState::Online => "running",
-                pmdaemon::ProcessState::Stopped => "stopped",
-                pmdaemon::ProcessState::Errored => "errored",
-                pmdaemon::ProcessState::Starting => "starting",
-                pmdaemon::ProcessState::Stopping => "stopping",
-                pmdaemon::ProcessState::Restarting => "restarting",
-            };
+                // Calculate uptime in seconds
+                let uptime_secs = if let Some(start_time) = process.uptime {
+                    let now = chrono::Utc::now();
+                    (now - start_time).num_seconds()
+                } else {
+                    0
+                };
 
-            // Calculate uptime in seconds
-            let uptime_secs = if let Some(start_time) = process.uptime {
-                let now = chrono::Utc::now();
-                (now - start_time).num_seconds()
-            } else {
-                0
-            };
+                // Format started_at timestamp
+                let started_at = if let Some(start_time) = process.uptime {
+                    start_time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+                } else {
+                    "N/A".to_string()
+                };
 
-            // Format started_at timestamp
-            let started_at = if let Some(start_time) = process.uptime {
-                start_time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-            } else {
-                "N/A".to_string()
-            };
+                ProcessInfo {
+                    name: process.name,
+                    status: status.to_string(),
+                    pid: process.pid.unwrap_or(0),
+                    started_at,
+                    uptime_seconds: uptime_secs,
+                    restarts: process.restarts,
+                    cpu_usage: process.cpu_usage as f64,
+                    memory_mb: process.memory_usage / 1024 / 1024,
+                }
+            })
+            .collect();
 
-            result.push_str(&format!(
-                "  - {} [{}]: PID: {}, started_at: {}, uptime: {}s, restarts: {}, CPU: {:.1}%, Mem: {} MB\n",
-                process.name,
-                status,
-                process.pid.unwrap_or(0),
-                started_at,
-                uptime_secs,
-                process.restarts,
-                process.cpu_usage,
-                process.memory_usage / 1024 / 1024 // Convert to MB
-            ));
-        }
-
-        Ok(result)
+        let response = ListResponse {
+            processes: process_infos,
+        };
+        Ok(serde_json::to_string(&response)?)
     }
 
     /// Generate a unique process ID from the command
