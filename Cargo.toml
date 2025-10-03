@@ -1,0 +1,41 @@
+[package]
+name = "commander-mcp"
+version = "0.3.0"
+authors = ["Towry Wang <towry@users.noreply.github.com>"]
+edition = "2021"
+description = "MCP (Model Context Protocol) server for background process management"
+readme = "README.md"
+homepage = "https://github.com/towry"
+repository = "https://github.com/towry/commander-mcp"
+license-file = "LICENSE"
+keywords = ["mcp", "process-manager", "server"]
+categories = ["development-tools"]
+publish = false
+
+[features]
+default = []
+
+[dependencies]
+# MCP Rust SDK
+rmcp = { version = "0.7", features = ["server", "macros", "transport-io"] }
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "signal"] }
+# Process manager
+pmdaemon = "0.1.4"
+chrono = "0.4"
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "1.0"
+# Error handling
+anyhow = "1.0"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "std", "fmt"] }
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[profile.release]
+lto = true
+panic = "abort"
