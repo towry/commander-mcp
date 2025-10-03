@@ -135,10 +135,12 @@ impl ProcessManager {
         let mut daemon = self.daemon.lock().await;
 
         // Use delete instead of stop to remove from the list
-        daemon
-            .delete(process_id)
-            .await
-            .with_context(|| format!("Failed to kill process '{}' - it may not exist or may have already stopped", process_id))?;
+        daemon.delete(process_id).await.with_context(|| {
+            format!(
+                "Failed to kill process '{}' - it may not exist or may have already stopped",
+                process_id
+            )
+        })?;
 
         drop(daemon);
 
