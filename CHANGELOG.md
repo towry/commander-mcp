@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/towry/commander-mcp/compare/v0.2.0...v0.2.1) (2025-10-03)
+
+
+### Bug Fixes
+
+* implement kill/stop distinction, JSON errors, and command tracking ([#8](https://github.com/towry/commander-mcp/issues/8)) ([b55c10d](https://github.com/towry/commander-mcp/commit/b55c10dd479eb613e7a905a7fc4e03581fc68fef))
+
 ## [0.2.0](https://github.com/towry/commander-mcp/compare/v0.1.0...v0.2.0) (2025-10-03)
 
 
