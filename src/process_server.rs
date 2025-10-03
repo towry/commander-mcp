@@ -403,4 +403,38 @@ mod tests {
         });
         let _ = server.kill(kill_params).await;
     }
+
+    #[tokio::test]
+    async fn test_structured_output_format() {
+        use rmcp::handler::server::tool::IntoCallToolResult;
+
+        // Create a test response
+        let response = RunResponse {
+            process_id: "test".to_string(),
+            command: "echo hello".to_string(),
+            message: "Started process 'test'".to_string(),
+        };
+
+        // Wrap it in Json
+        let json_response = rmcp::Json(response);
+
+        // Convert to CallToolResult - this is what rmcp does internally
+        let result = json_response.into_call_tool_result().unwrap();
+
+        // Verify structured_content is populated per MCP spec
+        assert!(
+            result.structured_content.is_some(),
+            "structured_content should be populated per MCP protocol"
+        );
+
+        // Verify content also has the JSON as text
+        assert!(!result.content.is_empty(), "content should not be empty");
+
+        // Verify is_error is false for success
+        assert_eq!(
+            result.is_error,
+            Some(false),
+            "is_error should be Some(false) for success"
+        );
+    }
 }
