@@ -89,18 +89,3 @@ jobs:
           cargo fetch --verbose
           # Build dependencies only (no actual project code)
           # cargo build --release --verbose || true
-
-      # Install Overmind
-      - name: Install Overmind
-        run: |
-          OVERMIND_VERSION="2.5.1"
-          OVERMIND_URL="https://github.com/DarthSim/overmind/releases/download/v${OVERMIND_VERSION}/overmind-v${OVERMIND_VERSION}-linux-amd64.gz"
-          
-          # Download and install Overmind
-          curl -L "$OVERMIND_URL" -o overmind.gz
-          gunzip overmind.gz
-          chmod +x overmind
-          sudo mv overmind /usr/local/bin/overmind
-          
-          # Verify installation
-          overmind --version
