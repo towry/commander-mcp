@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/towry/commander-mcp/compare/v0.1.0...v0.2.0) (2025-10-03)
+
+
+### Features
+
+* improve responses with JSON format, process control options, and log tooling ([#5](https://github.com/towry/commander-mcp/issues/5)) ([de2fa45](https://github.com/towry/commander-mcp/commit/de2fa458d371c7baa28ef8f0a856010ac218ffcc))
+
 ## 0.1.0 (2025-10-03)
 
 
