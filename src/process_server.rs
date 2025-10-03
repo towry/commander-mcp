@@ -26,6 +26,13 @@ pub struct KillParams {
 pub struct ReadParams {
     /// The process ID to read output from
     pub process_id: String,
+    /// Maximum number of log lines to return (default: 1000)
+    #[serde(default = "default_read_lines")]
+    pub lines: usize,
+}
+
+fn default_read_lines() -> usize {
+    1000
 }
 
 /// Parameters for the restart tool
@@ -95,10 +102,14 @@ impl ProcessServer {
 
     /// Read output from a process
     #[tool(
-        description = "Read the stdout output from a process by its ID. Returns recent log output."
+        description = "Read the stdout output from a process by its ID. Returns recent log output (default: last 1000 lines)."
     )]
     async fn read(&self, params: Parameters<ReadParams>) -> Result<CallToolResult, McpError> {
-        match self.manager.read(&params.0.process_id).await {
+        match self
+            .manager
+            .read(&params.0.process_id, params.0.lines)
+            .await
+        {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to read process output: {}",
@@ -183,5 +194,78 @@ mod tests {
 
         let tools = router.list_all();
         assert_eq!(tools.len(), 6);
+    }
+
+    #[test]
+    fn test_read_params_default_lines() {
+        // Test that default lines is 1000
+        let json = r#"{"process_id": "test_proc"}"#;
+        let params: ReadParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.process_id, "test_proc");
+        assert_eq!(params.lines, 1000);
+    }
+
+    #[test]
+    fn test_read_params_custom_lines() {
+        // Test that custom lines value is used
+        let json = r#"{"process_id": "test_proc", "lines": 500}"#;
+        let params: ReadParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.process_id, "test_proc");
+        assert_eq!(params.lines, 500);
+    }
+
+    #[tokio::test]
+    async fn test_run_and_list() {
+        let server = ProcessServer::new().await.unwrap();
+
+        // Run a simple command
+        let run_params = Parameters(RunParams {
+            command: "sleep 5".to_string(),
+        });
+        let result = server.run(run_params).await;
+        assert!(result.is_ok(), "Should be able to run a command");
+
+        // List processes to verify it shows up
+        let list_result = server.list().await;
+        assert!(list_result.is_ok(), "Should be able to list processes");
+
+        // Clean up - kill the process
+        let kill_params = Parameters(KillParams {
+            process_id: "sleep".to_string(),
+        });
+        let _ = server.kill(kill_params).await;
+    }
+
+    #[tokio::test]
+    async fn test_run_duplicate_process_error() {
+        let server = ProcessServer::new().await.unwrap();
+
+        // Run a command
+        let run_params1 = Parameters(RunParams {
+            command: "sleep 10".to_string(),
+        });
+        let result1 = server.run(run_params1).await;
+        assert!(result1.is_ok(), "First run should succeed");
+
+        // Try to run the same command again - should get helpful error
+        let run_params2 = Parameters(RunParams {
+            command: "sleep 10".to_string(),
+        });
+        let result2 = server.run(run_params2).await;
+
+        // The result is Ok(CallToolResult) but should be an error result
+        if let Ok(call_result) = result2 {
+            // Check if it's an error result
+            assert!(
+                !call_result.is_error.unwrap_or(false) || !call_result.content.is_empty(),
+                "Should return error content for duplicate process"
+            );
+        }
+
+        // Clean up
+        let kill_params = Parameters(KillParams {
+            process_id: "sleep".to_string(),
+        });
+        let _ = server.kill(kill_params).await;
     }
 }

@@ -125,8 +125,14 @@ Execute a command in the background.
 }
 ```
 
-**Response**:
-Returns a process ID generated from the command (e.g., `npm_run`).
+**Response** (JSON):
+```json
+{
+  "process_id": "npm_run",
+  "command": "npm run dev",
+  "message": "Started process 'npm_run'"
+}
+```
 
 ### kill
 
@@ -142,6 +148,14 @@ Kill a previously started process by its ID.
 }
 ```
 
+**Response** (JSON):
+```json
+{
+  "process_id": "npm_run",
+  "message": "Stopped process 'npm_run'"
+}
+```
+
 ### kill_all
 
 Kill all running processes.
@@ -150,24 +164,39 @@ Kill all running processes.
 
 **Example**: Call with no parameters to stop all processes.
 
+**Response** (JSON):
+```json
+{
+  "stopped_count": 3,
+  "message": "Stopped 3 process(es)"
+}
+```
+
 ### read
 
 Read the stdout output from a process by its ID.
 
-**Description**: Returns recent log output (last 100 lines).
+**Description**: Returns recent log output (default: last 1000 lines).
 
 **Parameters**:
 - `process_id` (string): The process ID to read output from
+- `lines` (number, optional): Maximum number of log lines to return (default: 1000)
 
 **Example**:
 ```json
 {
-  "process_id": "npm_run"
+  "process_id": "npm_run",
+  "lines": 500
 }
 ```
 
-**Response**:
-Returns the recent output from the process log file.
+**Response** (JSON):
+```json
+{
+  "process_id": "npm_run",
+  "logs": "... log output here ..."
+}
+```
 
 ### restart
 
@@ -183,14 +212,39 @@ Restart a previously run process by its ID.
 }
 ```
 
+**Response** (JSON):
+```json
+{
+  "process_id": "npm_run",
+  "message": "Restarted process 'npm_run'"
+}
+```
+
 ### list
 
 List all currently running or stopped processes.
 
 **Parameters**: None
 
-**Response**:
-Returns a list of all processes with their status, PID, uptime, CPU usage, memory usage, and restart count.
+**Response** (JSON):
+```json
+{
+  "processes": [
+    {
+      "name": "npm_run",
+      "status": "running",
+      "pid": 12345,
+      "started_at": "2025-10-03 17:14:55 UTC",
+      "uptime_seconds": 120,
+      "restarts": 0,
+      "cpu_usage": 2.5,
+      "memory_mb": 45
+    }
+  ]
+}
+```
+
+Returns a list of all processes with their status, PID, started_at timestamp, uptime, CPU usage, memory usage, and restart count.
 
 ## How It Works
 
