@@ -154,15 +154,17 @@ Kill all running processes.
 
 Read the stdout output from a process by its ID.
 
-**Description**: Returns recent log output (last 100 lines).
+**Description**: Returns recent log output (default: last 1000 lines).
 
 **Parameters**:
 - `process_id` (string): The process ID to read output from
+- `lines` (number, optional): Maximum number of log lines to return (default: 1000)
 
 **Example**:
 ```json
 {
-  "process_id": "npm_run"
+  "process_id": "npm_run",
+  "lines": 500
 }
 ```
 
@@ -190,7 +192,7 @@ List all currently running or stopped processes.
 **Parameters**: None
 
 **Response**:
-Returns a list of all processes with their status, PID, uptime, CPU usage, memory usage, and restart count.
+Returns a list of all processes with their status, PID, started_at timestamp, uptime, CPU usage, memory usage, and restart count.
 
 ## How It Works
 

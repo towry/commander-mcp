@@ -40,15 +40,26 @@ impl ProcessManager {
             .context("Failed to build process config")?;
 
         let mut daemon = self.daemon.lock().await;
-        daemon
-            .start(config)
-            .await
-            .context("Failed to start process")?;
 
-        Ok(format!(
-            "Started process '{}' with command: {}",
-            process_id, command
-        ))
+        // Try to start the process, but provide a helpful error if it already exists
+        match daemon.start(config).await {
+            Ok(_) => Ok(format!(
+                "Started process '{}' with command: {}",
+                process_id, command
+            )),
+            Err(e) => {
+                let error_msg = e.to_string();
+                // Check if the error is because the process already exists
+                if error_msg.contains("already exists") || error_msg.contains("duplicate") {
+                    Err(anyhow!(
+                        "Process '{}' already exists. Use the 'restart' tool to restart it, or 'kill' then 'run' to start fresh.",
+                        process_id
+                    ))
+                } else {
+                    Err(anyhow!("Failed to start process '{}': {}", process_id, e))
+                }
+            }
+        }
     }
 
     /// Kill a specific process
@@ -80,11 +91,11 @@ impl ProcessManager {
     }
 
     /// Read output from a process
-    pub async fn read(&self, process_id: &str) -> Result<String> {
+    pub async fn read(&self, process_id: &str, lines: usize) -> Result<String> {
         let daemon = self.daemon.lock().await;
 
         // Use get_logs method to retrieve log output
-        match daemon.get_logs(process_id, 100).await {
+        match daemon.get_logs(process_id, lines).await {
             Ok(logs) => {
                 if logs.is_empty() {
                     Ok(format!("No output available for process '{}'", process_id))
@@ -139,11 +150,19 @@ impl ProcessManager {
                 0
             };
 
+            // Format started_at timestamp
+            let started_at = if let Some(start_time) = process.uptime {
+                start_time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+            } else {
+                "N/A".to_string()
+            };
+
             result.push_str(&format!(
-                "  - {} [{}]: PID: {}, uptime: {}s, restarts: {}, CPU: {:.1}%, Mem: {}\n",
+                "  - {} [{}]: PID: {}, started_at: {}, uptime: {}s, restarts: {}, CPU: {:.1}%, Mem: {} MB\n",
                 process.name,
                 status,
                 process.pid.unwrap_or(0),
+                started_at,
                 uptime_secs,
                 process.restarts,
                 process.cpu_usage,

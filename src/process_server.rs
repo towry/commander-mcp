@@ -26,6 +26,13 @@ pub struct KillParams {
 pub struct ReadParams {
     /// The process ID to read output from
     pub process_id: String,
+    /// Maximum number of log lines to return (default: 1000)
+    #[serde(default = "default_read_lines")]
+    pub lines: usize,
+}
+
+fn default_read_lines() -> usize {
+    1000
 }
 
 /// Parameters for the restart tool
@@ -95,10 +102,14 @@ impl ProcessServer {
 
     /// Read output from a process
     #[tool(
-        description = "Read the stdout output from a process by its ID. Returns recent log output."
+        description = "Read the stdout output from a process by its ID. Returns recent log output (default: last 1000 lines)."
     )]
     async fn read(&self, params: Parameters<ReadParams>) -> Result<CallToolResult, McpError> {
-        match self.manager.read(&params.0.process_id).await {
+        match self
+            .manager
+            .read(&params.0.process_id, params.0.lines)
+            .await
+        {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to read process output: {}",
