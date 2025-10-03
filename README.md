@@ -1,6 +1,6 @@
-# Process Management MCP Server
+# commander-mcp
 
-A Model Context Protocol (MCP) server implementation in Rust for background process management. This server provides tools for running, monitoring, and managing background processes using PMDaemon through the MCP protocol.
+A Model Context Protocol (MCP) server for background process management. Built in Rust, commander-mcp provides powerful tools for running, monitoring, and managing background processes using PMDaemon through the MCP protocol.
 
 ## Features
 
