@@ -17,10 +17,38 @@ A Model Context Protocol (MCP) server implementation in Rust for background proc
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.70 or later (for building from source)
 - Cargo (comes with Rust)
 
 ### Installation
+
+#### Using the Install Script (Recommended)
+
+The easiest way to install commander-mcp is using the install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/towry/commander-mcp/main/install.sh | bash
+```
+
+Or download and inspect the script first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/towry/commander-mcp/main/install.sh -o install.sh
+chmod +x install.sh
+./install.sh
+```
+
+**Supported platforms:**
+- macOS Apple Silicon (M1/M2/M3) - aarch64-apple-darwin
+- Linux x86_64 - x86_64-unknown-linux-gnu
+
+The script will:
+1. Detect your platform automatically
+2. Download the latest release binary
+3. Install it to `/usr/local/bin`
+4. Verify the installation
+
+#### Building from Source
 
 ```bash
 # Clone the repository
@@ -42,8 +70,41 @@ The MCP server communicates via standard input/output using the MCP protocol. Yo
 # Install MCP Inspector (requires Node.js)
 npm install -g @modelcontextprotocol/inspector
 
-# Run the inspector with this server
+# If installed via install script
+npx @modelcontextprotocol/inspector commander-mcp
+
+# If running from source
 npx @modelcontextprotocol/inspector cargo run --release
+```
+
+#### Using with Claude Desktop
+
+To use this MCP server with Claude Desktop, add the following to your Claude Desktop configuration file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "commander": {
+      "command": "/usr/local/bin/commander-mcp"
+    }
+  }
+}
+```
+
+Or if running from source:
+
+```json
+{
+  "mcpServers": {
+    "commander": {
+      "command": "cargo",
+      "args": ["run", "--release", "--manifest-path", "/path/to/commander-mcp/Cargo.toml"]
+    }
+  }
+}
 ```
 
 ## Available Tools
