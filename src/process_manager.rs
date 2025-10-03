@@ -1,8 +1,15 @@
 use anyhow::{anyhow, Context, Result};
 use pmdaemon::{ProcessConfig, ProcessManager as PmDaemon};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Error response format
+#[derive(Serialize, Deserialize)]
+struct ErrorResponse {
+    error: String,
+}
 
 /// Response for the run command
 #[derive(Serialize, Deserialize)]
@@ -44,6 +51,7 @@ struct RestartResponse {
 #[derive(Serialize, Deserialize)]
 struct ProcessInfo {
     name: String,
+    command: String,
     status: String,
     pid: u32,
     started_at: String,
@@ -62,6 +70,7 @@ struct ListResponse {
 #[derive(Clone)]
 pub struct ProcessManager {
     daemon: Arc<Mutex<PmDaemon>>,
+    commands: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl ProcessManager {
@@ -72,6 +81,7 @@ impl ProcessManager {
 
         Ok(Self {
             daemon: Arc::new(Mutex::new(daemon)),
+            commands: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -100,6 +110,10 @@ impl ProcessManager {
         // Try to start the process, but provide a helpful error if it already exists
         match daemon.start(config).await {
             Ok(_) => {
+                // Store the command for later retrieval
+                let mut commands = self.commands.lock().await;
+                commands.insert(process_id.clone(), command.to_string());
+
                 let response = RunResponse {
                     process_id: process_id.clone(),
                     command: command.to_string(),
@@ -111,19 +125,49 @@ impl ProcessManager {
                 let error_msg = e.to_string();
                 // Check if the error is because the process already exists
                 if error_msg.contains("already exists") || error_msg.contains("duplicate") {
-                    Err(anyhow!(
-                        "Process '{}' already exists. Use the 'restart' tool to restart it, or 'kill' then 'run' to start fresh.",
-                        process_id
-                    ))
+                    let err = ErrorResponse {
+                        error: format!(
+                            "Process '{}' already exists. Use the 'restart' tool to restart it, or 'kill' then 'run' to start fresh.",
+                            process_id
+                        ),
+                    };
+                    Err(anyhow!(serde_json::to_string(&err)?))
                 } else {
-                    Err(anyhow!("Failed to start process '{}': {}", process_id, e))
+                    let err = ErrorResponse {
+                        error: format!("Failed to start process '{}': {}", process_id, e),
+                    };
+                    Err(anyhow!(serde_json::to_string(&err)?))
                 }
             }
         }
     }
 
-    /// Kill a specific process
+    /// Kill a specific process and remove it from the list
     pub async fn kill(&self, process_id: &str) -> Result<String> {
+        let mut daemon = self.daemon.lock().await;
+
+        // Use delete instead of stop to remove from the list
+        daemon
+            .delete(process_id)
+            .await
+            .context(format!("Failed to kill process '{}'", process_id))?;
+
+        drop(daemon);
+
+        // Remove from command tracking
+        let mut commands = self.commands.lock().await;
+        commands.remove(process_id);
+        drop(commands);
+
+        let response = KillResponse {
+            process_id: process_id.to_string(),
+            message: format!("Killed and removed process '{}'", process_id),
+        };
+        Ok(serde_json::to_string(&response)?)
+    }
+
+    /// Stop a specific process (without removing from the list)
+    pub async fn stop(&self, process_id: &str) -> Result<String> {
         let mut daemon = self.daemon.lock().await;
         daemon
             .stop(process_id)
@@ -137,23 +181,26 @@ impl ProcessManager {
         Ok(serde_json::to_string(&response)?)
     }
 
-    /// Kill all running processes
+    /// Kill all running processes and remove them from the list
     pub async fn kill_all(&self) -> Result<String> {
         let mut daemon = self.daemon.lock().await;
-        let processes = daemon.list().await?;
 
-        let mut stopped_count = 0;
-        for process in processes {
-            if let Err(e) = daemon.stop(&process.name).await {
-                tracing::warn!("Failed to stop process '{}': {}", process.name, e);
-            } else {
-                stopped_count += 1;
-            }
-        }
+        // Use delete_all to remove all processes from the list
+        let deleted_count = daemon
+            .delete_all()
+            .await
+            .context("Failed to delete all processes")?;
+
+        drop(daemon);
+
+        // Clear command tracking
+        let mut commands = self.commands.lock().await;
+        commands.clear();
+        drop(commands);
 
         let response = KillAllResponse {
-            stopped_count,
-            message: format!("Stopped {} process(es)", stopped_count),
+            stopped_count: deleted_count,
+            message: format!("Killed and removed {} process(es)", deleted_count),
         };
         Ok(serde_json::to_string(&response)?)
     }
@@ -171,11 +218,12 @@ impl ProcessManager {
                 };
                 Ok(serde_json::to_string(&response)?)
             }
-            Err(e) => Err(anyhow!(
-                "Failed to read logs for process '{}': {}",
-                process_id,
-                e
-            )),
+            Err(e) => {
+                let err = ErrorResponse {
+                    error: format!("Failed to read logs for process '{}': {}", process_id, e),
+                };
+                Err(anyhow!(serde_json::to_string(&err)?))
+            }
         }
     }
 
@@ -198,6 +246,9 @@ impl ProcessManager {
     pub async fn list(&self) -> Result<String> {
         let daemon = self.daemon.lock().await;
         let processes = daemon.list().await?;
+        drop(daemon);
+
+        let commands = self.commands.lock().await;
 
         let process_infos: Vec<ProcessInfo> = processes
             .into_iter()
@@ -226,8 +277,15 @@ impl ProcessManager {
                     "N/A".to_string()
                 };
 
+                // Get the command from our tracking map, or use a placeholder
+                let command = commands
+                    .get(&process.name)
+                    .cloned()
+                    .unwrap_or_else(|| "<unknown>".to_string());
+
                 ProcessInfo {
                     name: process.name,
+                    command,
                     status: status.to_string(),
                     pid: process.pid.unwrap_or(0),
                     started_at,
