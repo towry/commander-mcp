@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0 (2025-10-03)
+
+
+### Features
+
+* add install script and update README with installation instructions ([#2](https://github.com/towry/commander-mcp/issues/2)) ([3dbbf69](https://github.com/towry/commander-mcp/commit/3dbbf69caa9a5a651581f31348ac95fd921e658c))
+
 ## [0.3.0](https://github.com/towry/vibe-rust-template/compare/v0.2.4...v0.3.0) (2025-09-24)
 
 
