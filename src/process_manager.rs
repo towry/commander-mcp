@@ -204,6 +204,7 @@ impl ProcessManager {
 
         // Disable auto-restart - we want to detect failures immediately
         config.autorestart = false;
+        config.max_restarts = 0; // Ensure no restarts happen at all
 
         let mut daemon = self.daemon.lock().await;
 
