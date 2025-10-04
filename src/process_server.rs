@@ -52,6 +52,14 @@ pub struct RestartParams {
     pub process_id: String,
 }
 
+/// Parameters for the kill_all tool (no parameters required)
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct KillAllParams {}
+
+/// Parameters for the list tool (no parameters required)
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct ListParams {}
+
 /// Process management server that provides tools for running and managing background processes
 #[derive(Clone)]
 pub struct ProcessServer {
@@ -108,7 +116,10 @@ impl ProcessServer {
 
     /// Kill all running processes
     #[tool(description = "Kill all running processes and remove them from the list.")]
-    async fn kill_all(&self) -> Result<Json<KillAllResponse>, String> {
+    async fn kill_all(
+        &self,
+        _params: Parameters<KillAllParams>,
+    ) -> Result<Json<KillAllResponse>, String> {
         self.manager
             .kill_all()
             .await
@@ -143,7 +154,7 @@ impl ProcessServer {
 
     /// List all processes
     #[tool(description = "List all currently running or stopped processes.")]
-    async fn list(&self) -> Result<Json<ListResponse>, String> {
+    async fn list(&self, _params: Parameters<ListParams>) -> Result<Json<ListResponse>, String> {
         self.manager
             .list()
             .await
@@ -230,7 +241,7 @@ mod tests {
         let server = ProcessServer::new().await.unwrap();
 
         // Clean up any leftover processes from previous tests
-        let _ = server.kill_all().await;
+        let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
         // Run a simple command
         let run_params = Parameters(RunParams {
@@ -240,7 +251,7 @@ mod tests {
         assert!(result.is_ok(), "Should be able to run a command");
 
         // List processes to verify it shows up
-        let list_result = server.list().await;
+        let list_result = server.list(Parameters(ListParams {})).await;
         assert!(list_result.is_ok(), "Should be able to list processes");
 
         // Clean up - kill the process
@@ -255,7 +266,7 @@ mod tests {
         let server = ProcessServer::new().await.unwrap();
 
         // Clean up any leftover processes from previous tests
-        let _ = server.kill_all().await;
+        let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
         // Run a command
         let run_params1 = Parameters(RunParams {
@@ -289,7 +300,7 @@ mod tests {
         let server = ProcessServer::new().await.unwrap();
 
         // Clean up any leftover processes from previous tests
-        let _ = server.kill_all().await;
+        let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
         // Run a command
         let run_params = Parameters(RunParams {
@@ -315,7 +326,7 @@ mod tests {
         assert!(kill_result.is_ok(), "Kill should succeed");
 
         // Verify list succeeds
-        let list_result = server.list().await;
+        let list_result = server.list(Parameters(ListParams {})).await;
         assert!(list_result.is_ok(), "List should succeed after kill");
     }
 
@@ -324,7 +335,7 @@ mod tests {
         let server = ProcessServer::new().await.unwrap();
 
         // Clean up any leftover processes from previous tests
-        let _ = server.kill_all().await;
+        let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
         // Run multiple commands
         let _ = server
@@ -339,11 +350,11 @@ mod tests {
             .await;
 
         // Kill all
-        let kill_all_result = server.kill_all().await;
+        let kill_all_result = server.kill_all(Parameters(KillAllParams {})).await;
         assert!(kill_all_result.is_ok(), "Kill all should succeed");
 
         // Verify list returns successfully
-        let list_result = server.list().await;
+        let list_result = server.list(Parameters(ListParams {})).await;
         assert!(list_result.is_ok(), "List should succeed after kill_all");
     }
 
@@ -352,7 +363,7 @@ mod tests {
         let server = ProcessServer::new().await.unwrap();
 
         // Clean up any leftover processes from previous tests
-        let _ = server.kill_all().await;
+        let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
         // Run a command
         let run_params = Parameters(RunParams {
@@ -362,7 +373,7 @@ mod tests {
         assert!(run_result.is_ok(), "Run should succeed");
 
         // List processes
-        let list_result = server.list().await;
+        let list_result = server.list(Parameters(ListParams {})).await;
         assert!(list_result.is_ok(), "List should succeed");
 
         // Clean up
@@ -378,7 +389,7 @@ mod tests {
         let server = ProcessServer::new().await.unwrap();
 
         // Clean up any leftover processes from previous tests
-        let _ = server.kill_all().await;
+        let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
         // Run a command
         let run_params = Parameters(RunParams {
