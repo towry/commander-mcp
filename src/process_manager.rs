@@ -215,8 +215,9 @@ impl ProcessManager {
                 commands.insert(process_id.clone(), command.to_string());
                 drop(commands);
 
-                // Wait 1 second to detect early failures
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                // Wait 2 seconds to detect early failures
+                // This gives processes time to fail during initialization (e.g., port binding)
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
                 // Check if the process has failed
                 let processes = daemon.list().await?;
@@ -244,6 +245,36 @@ impl ProcessManager {
 
                         return Err(anyhow!(
                             "Process '{}' failed to start. Logs:\n{}",
+                            process_id,
+                            logs
+                        ));
+                    }
+
+                    // Even if process appears running, check logs for common error patterns
+                    let logs = daemon.get_logs(&process_id, 100).await.unwrap_or_default();
+                    let logs_lower = logs.to_lowercase();
+
+                    // Check for common failure indicators in logs
+                    let has_error_in_logs = logs_lower.contains("error:")
+                        || logs_lower.contains("traceback")
+                        || logs_lower.contains("exception")
+                        || logs_lower.contains("address already in use")
+                        || logs_lower.contains("permission denied")
+                        || logs_lower.contains("cannot bind")
+                        || logs_lower.contains("failed to");
+
+                    if has_error_in_logs {
+                        // Clean up the failed process
+                        let _ = daemon.delete(&process_id).await;
+                        drop(daemon);
+
+                        // Remove from command tracking
+                        let mut commands = self.commands.lock().await;
+                        commands.remove(&process_id);
+                        drop(commands);
+
+                        return Err(anyhow!(
+                            "Process '{}' failed during initialization. Logs:\n{}",
                             process_id,
                             logs
                         ));
