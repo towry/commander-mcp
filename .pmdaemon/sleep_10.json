@@ -1,0 +1,28 @@
+{
+  "name": "sleep_10",
+  "script": "sleep",
+  "args": [
+    "10"
+  ],
+  "cwd": null,
+  "env": {},
+  "instances": 1,
+  "exec_mode": "fork",
+  "autorestart": false,
+  "max_restarts": 16,
+  "min_uptime": 1000,
+  "restart_delay": 0,
+  "kill_timeout": 1600,
+  "max_memory_restart": null,
+  "out_file": null,
+  "error_file": null,
+  "log_file": null,
+  "pid_file": null,
+  "watch": false,
+  "ignore_watch": [],
+  "user": null,
+  "group": null,
+  "namespace": "default",
+  "port": null,
+  "health_check": null
+}

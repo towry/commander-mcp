@@ -72,14 +72,81 @@ pub struct ProcessManager {
 
 impl ProcessManager {
     pub async fn new() -> Result<Self> {
-        let daemon = PmDaemon::new()
+        // Set PMDAEMON_HOME to current working directory to isolate state per directory
+        // This prevents state from persisting across different working directories
+        if std::env::var("PMDAEMON_HOME").is_err() {
+            let cwd = std::env::current_dir().context("Failed to get current directory")?;
+            let pmdaemon_dir = cwd.join(".pmdaemon");
+            std::env::set_var("PMDAEMON_HOME", pmdaemon_dir);
+        }
+
+        let mut daemon = PmDaemon::new()
             .await
             .context("Failed to initialize PMDaemon")?;
+
+        // Clean up stale processes on startup (processes with non-existent PIDs)
+        // This handles cases where the server crashed without cleanup
+        let processes = daemon.list().await.context("Failed to list processes")?;
+        let mut stale_count = 0;
+
+        for process in processes {
+            // Check if the process is stopped or errored, or if PID doesn't exist
+            let is_stale = matches!(
+                process.state,
+                pmdaemon::ProcessState::Stopped | pmdaemon::ProcessState::Errored
+            ) || process.pid.is_none()
+                || (process.pid.is_some() && !Self::pid_exists(process.pid.unwrap()));
+
+            if is_stale {
+                tracing::info!(
+                    "Removing stale process '{}' (PID: {:?}, state: {:?})",
+                    process.name,
+                    process.pid,
+                    process.state
+                );
+                if let Err(e) = daemon.delete(&process.name).await {
+                    tracing::warn!("Failed to delete stale process '{}': {}", process.name, e);
+                } else {
+                    stale_count += 1;
+                }
+            }
+        }
+
+        if stale_count > 0 {
+            tracing::info!("Cleaned up {} stale process(es) on startup", stale_count);
+        }
 
         Ok(Self {
             daemon: Arc::new(Mutex::new(daemon)),
             commands: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// Check if a PID exists
+    fn pid_exists(pid: u32) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            std::path::Path::new(&format!("/proc/{}", pid)).exists()
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS, use kill with signal 0 via libc
+            unsafe { libc::kill(pid as i32, 0) == 0 }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows, we could use Process API but for now just check if it's in the list
+            // This is a limitation - we'll rely on stopped/errored status instead
+            true
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            // For other platforms, assume the process exists
+            true
+        }
     }
 
     /// Cleanup all processes on shutdown
