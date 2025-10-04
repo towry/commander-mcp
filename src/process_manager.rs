@@ -217,7 +217,9 @@ impl ProcessManager {
                 drop(commands);
 
                 // Wait and check multiple times to detect early failures
-                // PMDaemon may take time to update process state after a process exits
+                // CRITICAL: PMDaemon doesn't automatically update process status in background!
+                // The exit_code field is only updated when check_status() is called on each process.
+                // We must explicitly call check_all_processes() before each check to trigger updates.
                 let mut check_attempts = 0;
                 let max_attempts = 5; // Check for up to 5 seconds
 
@@ -225,7 +227,12 @@ impl ProcessManager {
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     check_attempts += 1;
 
-                    // Check if the process has failed
+                    // CRITICAL: PMDaemon doesn't automatically update process status in background
+                    // We need to explicitly call check_all_processes() to trigger status updates
+                    // This calls check_status() on each process which updates exit_code and state
+                    let _ = daemon.check_all_processes().await;
+
+                    // Now get the updated process list
                     let processes = daemon.list().await?;
                     let process_status = processes.iter().find(|p| p.name == process_id);
 
