@@ -82,6 +82,28 @@ impl ProcessManager {
         })
     }
 
+    /// Cleanup all processes on shutdown
+    pub async fn cleanup(&self) -> Result<()> {
+        tracing::info!("Cleaning up all processes on shutdown");
+        let mut daemon = self.daemon.lock().await;
+
+        // Delete all processes from PMDaemon
+        let deleted_count = daemon
+            .delete_all()
+            .await
+            .context("Failed to delete all processes during cleanup")?;
+
+        drop(daemon);
+
+        // Clear command tracking
+        let mut commands = self.commands.lock().await;
+        commands.clear();
+        drop(commands);
+
+        tracing::info!("Cleaned up {} process(es)", deleted_count);
+        Ok(())
+    }
+
     /// Run a command and return the process ID
     pub async fn run(&self, command: &str) -> Result<RunResponse> {
         let parts: Vec<&str> = command.split_whitespace().collect();

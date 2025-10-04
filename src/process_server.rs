@@ -80,6 +80,13 @@ impl ProcessServer {
         })
     }
 
+    /// Cleanup all processes on shutdown
+    pub async fn cleanup(&self) -> Result<(), McpError> {
+        self.manager.cleanup().await.map_err(|e| {
+            McpError::internal_error(format!("Failed to cleanup processes: {}", e), None)
+        })
+    }
+
     /// Run a command in the background
     #[tool(
         description = "Run a command in the background. Returns the process ID that can be used with other tools."
