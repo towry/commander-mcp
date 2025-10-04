@@ -12,6 +12,8 @@ pub struct RunResponse {
     pub process_id: String,
     pub command: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logs: Option<String>,
 }
 
 /// Response for the kill command
@@ -108,11 +110,49 @@ impl ProcessManager {
                 // Store the command for later retrieval
                 let mut commands = self.commands.lock().await;
                 commands.insert(process_id.clone(), command.to_string());
+                drop(commands);
+
+                // Wait 1 second to detect early failures
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+                // Check if the process has failed
+                let processes = daemon.list().await?;
+                let process_status = processes.iter().find(|p| p.name == process_id);
+
+                if let Some(status) = process_status {
+                    // If process is in errored or stopped state, it failed
+                    if matches!(
+                        status.state,
+                        pmdaemon::ProcessState::Errored | pmdaemon::ProcessState::Stopped
+                    ) {
+                        // Get logs to include in error message
+                        let logs = daemon.get_logs(&process_id, 100).await.unwrap_or_default();
+
+                        // Clean up the failed process
+                        let _ = daemon.delete(&process_id).await;
+                        drop(daemon);
+
+                        // Remove from command tracking
+                        let mut commands = self.commands.lock().await;
+                        commands.remove(&process_id);
+                        drop(commands);
+
+                        return Err(anyhow!(
+                            "Process '{}' failed to start. Logs:\n{}",
+                            process_id,
+                            logs
+                        ));
+                    }
+                }
+
+                // Get initial logs to include in response
+                let logs = daemon.get_logs(&process_id, 100).await.ok();
 
                 Ok(RunResponse {
                     process_id: process_id.clone(),
                     command: command.to_string(),
                     message: format!("Started process '{}'", process_id),
+                    logs,
                 })
             }
             Err(e) => {

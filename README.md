@@ -113,7 +113,7 @@ Or if running from source:
 
 Execute a command in the background.
 
-**Description**: Run a command in the background. Returns the process ID that can be used with other tools.
+**Description**: Run a command in the background. The tool waits 1 second after starting to detect early failures. Returns the process ID that can be used with other tools, along with initial logs.
 
 **Parameters**:
 - `command` (string): The command to run
@@ -130,9 +130,23 @@ Execute a command in the background.
 {
   "process_id": "npm_run",
   "command": "npm run dev",
-  "message": "Started process 'npm_run'"
+  "message": "Started process 'npm_run'",
+  "logs": "... initial log output (if available) ..."
 }
 ```
+
+**Error Response** (if process fails immediately):
+```json
+{
+  "error": "Process 'npm_run' failed to start. Logs:\n... error logs ..."
+}
+```
+
+**Notes**:
+- The tool waits 1 second after starting the process to detect early failures
+- If the process enters an errored or stopped state within this time, an error is returned
+- Initial logs (up to 100 lines) are included in the response when available
+- This helps detect issues like "address already in use" without needing to call the `read` tool separately
 
 ### kill
 

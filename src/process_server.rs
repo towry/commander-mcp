@@ -424,6 +424,7 @@ mod tests {
             process_id: "test".to_string(),
             command: "echo hello".to_string(),
             message: "Started process 'test'".to_string(),
+            logs: None,
         };
 
         // Wrap it in Json
@@ -447,5 +448,31 @@ mod tests {
             Some(false),
             "is_error should be Some(false) for success"
         );
+    }
+
+    #[tokio::test]
+    async fn test_run_detects_early_failure() {
+        let server = ProcessServer::new().await.unwrap();
+
+        // Clean up any leftover processes from previous tests
+        let _ = server.kill_all(Parameters(KillAllParams {})).await;
+
+        // Try to run a command that will fail immediately
+        // Using a non-existent command should cause an early failure
+        let run_params = Parameters(RunParams {
+            command: "nonexistent_command_12345".to_string(),
+        });
+        let result = server.run(run_params).await;
+
+        // Should return an error for a command that fails immediately
+        if let Err(error_msg) = result {
+            assert!(
+                error_msg.contains("Failed to start process") || error_msg.contains("Logs:"),
+                "Error message should indicate failure or include logs: {}",
+                error_msg
+            );
+        } else {
+            panic!("Should return error for command that fails immediately, but got success");
+        }
     }
 }
