@@ -120,11 +120,15 @@ impl ProcessManager {
                 let process_status = processes.iter().find(|p| p.name == process_id);
 
                 if let Some(status) = process_status {
-                    // If process is in errored or stopped state, it failed
-                    if matches!(
+                    // If process is in errored or stopped state, has no PID (exited),
+                    // or has already restarted (indicating it crashed), it failed
+                    let has_failed = matches!(
                         status.state,
                         pmdaemon::ProcessState::Errored | pmdaemon::ProcessState::Stopped
-                    ) {
+                    ) || status.pid.is_none()
+                        || status.restarts > 0;
+
+                    if has_failed {
                         // Get logs to include in error message
                         let logs = daemon.get_logs(&process_id, 100).await.unwrap_or_default();
 
