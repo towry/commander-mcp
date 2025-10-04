@@ -157,31 +157,45 @@ impl ProcessManager {
     #[cfg(unix)]
     fn kill_children(parent_pid: u32) {
         // Find all child processes by reading /proc
-        if let Ok(entries) = std::fs::read_dir("/proc") {
-            for entry in entries.flatten() {
-                if let Ok(file_name) = entry.file_name().into_string() {
-                    // Check if the entry is a PID directory
-                    if let Ok(pid) = file_name.parse::<u32>() {
-                        // Read the stat file to get the parent PID
-                        let stat_path = format!("/proc/{}/stat", pid);
-                        if let Ok(stat) = std::fs::read_to_string(&stat_path) {
-                            // Parse the stat file to get PPID (4th field after the comm field)
-                            // Format: pid (comm) state ppid ...
-                            if let Some(ppid) = Self::parse_ppid_from_stat(&stat) {
-                                if ppid == parent_pid {
-                                    // Recursively kill children of this child first
-                                    Self::kill_children(pid);
+        let entries = match std::fs::read_dir("/proc") {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
 
-                                    // Then kill this child process
-                                    unsafe {
-                                        let _ = libc::kill(pid as i32, libc::SIGTERM);
-                                        std::thread::sleep(std::time::Duration::from_millis(50));
-                                        let _ = libc::kill(pid as i32, libc::SIGKILL);
-                                    }
-                                }
-                            }
-                        }
-                    }
+        for entry in entries.flatten() {
+            // Try to parse directory name as PID
+            let file_name = match entry.file_name().into_string() {
+                Ok(name) => name,
+                Err(_) => continue,
+            };
+
+            let pid = match file_name.parse::<u32>() {
+                Ok(pid) => pid,
+                Err(_) => continue,
+            };
+
+            // Read and parse the stat file to get parent PID
+            let stat_path = format!("/proc/{}/stat", pid);
+            let stat = match std::fs::read_to_string(&stat_path) {
+                Ok(stat) => stat,
+                Err(_) => continue,
+            };
+
+            let ppid = match Self::parse_ppid_from_stat(&stat) {
+                Some(ppid) => ppid,
+                None => continue,
+            };
+
+            // If this process is a child of parent_pid, kill it
+            if ppid == parent_pid {
+                // Recursively kill children of this child first
+                Self::kill_children(pid);
+
+                // Then kill this child process
+                unsafe {
+                    let _ = libc::kill(pid as i32, libc::SIGTERM);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    let _ = libc::kill(pid as i32, libc::SIGKILL);
                 }
             }
         }
@@ -276,35 +290,41 @@ impl ProcessManager {
     /// Cleanup all processes on shutdown
     pub async fn cleanup(&self) -> Result<()> {
         tracing::info!("Cleaning up all processes on shutdown");
-        let mut daemon = self.daemon.lock().await;
 
-        // First, kill all process trees
-        let processes = daemon
-            .list()
-            .await
-            .context("Failed to list processes during cleanup")?;
-        for process in &processes {
-            if let Some(pid) = process.pid {
-                tracing::info!(
-                    "Killing process tree for '{}' (PID: {}) during cleanup",
-                    process.name,
-                    pid
-                );
-                Self::kill_process_tree(pid);
-            }
+        // First, get all process PIDs WITHOUT holding the lock
+        let pids_to_kill = {
+            let daemon = self.daemon.lock().await;
+            let processes = daemon
+                .list()
+                .await
+                .context("Failed to list processes during cleanup")?;
+            processes
+                .iter()
+                .filter_map(|p| p.pid.map(|pid| (p.name.clone(), pid)))
+                .collect::<Vec<_>>()
+        };
+
+        // Kill all process trees WITHOUT holding the mutex
+        for (name, pid) in &pids_to_kill {
+            tracing::info!(
+                "Killing process tree for '{}' (PID: {}) during cleanup",
+                name,
+                pid
+            );
+            Self::kill_process_tree(*pid);
         }
 
         // Give the processes time to terminate
-        if !processes.is_empty() {
+        if !pids_to_kill.is_empty() {
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
 
-        // Delete all processes from PMDaemon
+        // Reacquire lock only for deletion
+        let mut daemon = self.daemon.lock().await;
         let deleted_count = daemon
             .delete_all()
             .await
             .context("Failed to delete all processes during cleanup")?;
-
         drop(daemon);
 
         // Clear command tracking
@@ -474,28 +494,33 @@ impl ProcessManager {
 
     /// Kill a specific process and remove it from the list
     pub async fn kill(&self, process_id: &str) -> Result<KillResponse> {
-        let mut daemon = self.daemon.lock().await;
-
         // First, get the PID so we can kill the entire process tree
-        let processes = daemon.list().await?;
-        if let Some(process) = processes.iter().find(|p| p.name == process_id) {
-            if let Some(pid) = process.pid {
-                tracing::info!("Killing process tree for '{}' (PID: {})", process_id, pid);
-                // Kill the entire process tree before deleting from daemon
-                Self::kill_process_tree(pid);
-                // Give the processes time to terminate
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-            }
+        // Acquire lock, get data, then immediately release
+        let pid_to_kill = {
+            let daemon = self.daemon.lock().await;
+            let processes = daemon.list().await?;
+            processes
+                .iter()
+                .find(|p| p.name == process_id)
+                .and_then(|p| p.pid)
+        };
+
+        // Kill the process tree WITHOUT holding the mutex
+        if let Some(pid) = pid_to_kill {
+            tracing::info!("Killing process tree for '{}' (PID: {})", process_id, pid);
+            Self::kill_process_tree(pid);
+            // Give the processes time to terminate
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
 
-        // Use delete instead of stop to remove from the list
+        // Reacquire lock only for deletion
+        let mut daemon = self.daemon.lock().await;
         daemon.delete(process_id).await.with_context(|| {
             format!(
                 "Failed to kill process '{}' - it may not exist or may have already stopped",
                 process_id
             )
         })?;
-
         drop(daemon);
 
         // Remove from command tracking
@@ -525,28 +550,33 @@ impl ProcessManager {
 
     /// Kill all running processes and remove them from the list
     pub async fn kill_all(&self) -> Result<KillAllResponse> {
-        let mut daemon = self.daemon.lock().await;
+        // First, get all process PIDs WITHOUT holding the lock
+        let pids_to_kill = {
+            let daemon = self.daemon.lock().await;
+            let processes = daemon.list().await?;
+            processes
+                .iter()
+                .filter_map(|p| p.pid.map(|pid| (p.name.clone(), pid)))
+                .collect::<Vec<_>>()
+        };
 
-        // First, get all process PIDs and kill their process trees
-        let processes = daemon.list().await?;
-        for process in &processes {
-            if let Some(pid) = process.pid {
-                tracing::info!("Killing process tree for '{}' (PID: {})", process.name, pid);
-                Self::kill_process_tree(pid);
-            }
+        // Kill all process trees WITHOUT holding the mutex
+        for (name, pid) in &pids_to_kill {
+            tracing::info!("Killing process tree for '{}' (PID: {})", name, pid);
+            Self::kill_process_tree(*pid);
         }
 
         // Give the processes time to terminate
-        if !processes.is_empty() {
+        if !pids_to_kill.is_empty() {
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
 
-        // Use delete_all to remove all processes from the list
+        // Reacquire lock only for deletion
+        let mut daemon = self.daemon.lock().await;
         let deleted_count = daemon
             .delete_all()
             .await
             .context("Failed to delete all processes")?;
-
         drop(daemon);
 
         // Clear command tracking
