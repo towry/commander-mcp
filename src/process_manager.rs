@@ -246,7 +246,11 @@ impl ProcessManager {
                             false
                         };
 
-                        let has_failed = state_failed || pid_gone || pid_not_exists;
+                        // Check if process has exited with a non-zero exit code
+                        let has_error_exit_code = status.exit_code.is_some_and(|code| code != 0);
+
+                        let has_failed =
+                            state_failed || pid_gone || pid_not_exists || has_error_exit_code;
 
                         if has_failed {
                             // Get logs to include in error message
