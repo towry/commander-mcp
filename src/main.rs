@@ -6,8 +6,17 @@ mod process_manager;
 mod process_server;
 use process_server::ProcessServer;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Check for --version flag
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && (args[1] == "--version" || args[1] == "-V") {
+        println!("{}", VERSION);
+        return Ok(());
+    }
+
     // Initialize the tracing subscriber with stderr logging
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
