@@ -349,6 +349,7 @@ version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
+ "libc",
  "pmdaemon",
  "rmcp",
  "schemars",
@@ -358,6 +359,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "winapi",
 ]
 
 [[package]]

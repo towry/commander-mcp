@@ -129,13 +129,34 @@ impl ProcessManager {
             std::path::Path::new(&format!("/proc/{}", pid)).exists()
         }
 
+        #[cfg(unix)]
         #[cfg(not(target_os = "linux"))]
         {
-            // On non-Linux platforms (macOS, Windows, etc.), we don't have a simple
-            // way to check if a PID exists without additional dependencies.
-            // We'll rely on the process state (stopped/errored) instead.
-            // This is a conservative approach - assume the process might still exist.
-            true
+            // On Unix-like systems (macOS, BSD, etc.), use kill with signal 0
+            // kill(pid, 0) returns 0 if the process exists and we have permission
+            unsafe { libc::kill(pid as i32, 0) == 0 }
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, try to open the process handle
+            // This is a simplified check - process might exist but we lack permissions
+            use std::ptr;
+            const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+            unsafe {
+                let handle = winapi::um::processthreadsapi::OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION,
+                    0,
+                    pid,
+                );
+                if handle == ptr::null_mut() {
+                    false
+                } else {
+                    winapi::um::handleapi::CloseHandle(handle);
+                    true
+                }
+            }
         }
     }
 

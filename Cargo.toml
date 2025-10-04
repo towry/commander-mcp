@@ -33,6 +33,14 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "std", "fmt"] }
 
+[target.'cfg(unix)'.dependencies]
+# System calls for PID checking on Unix
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Windows API for PID checking
+winapi = { version = "0.3", features = ["processthreadsapi", "handleapi"] }
+
 [dev-dependencies]
 tempfile = "3.8"
 
