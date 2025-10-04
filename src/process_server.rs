@@ -375,9 +375,12 @@ mod tests {
         // Clean up any leftover processes from previous tests
         let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
-        // Run a command
+        // Give a moment for cleanup to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Run a command with unique identifier
         let run_params = Parameters(RunParams {
-            command: "python -m http.server".to_string(),
+            command: "sleep 100".to_string(),
         });
         let run_result = server.run(run_params).await;
         assert!(run_result.is_ok(), "Run should succeed");
@@ -388,7 +391,7 @@ mod tests {
 
         // Clean up
         let kill_params = Parameters(KillParams {
-            process_id: "python".to_string(),
+            process_id: "sleep".to_string(),
         });
         let _ = server.kill(kill_params).await;
     }
@@ -493,13 +496,19 @@ mod tests {
         // Clean up any leftover processes from previous tests
         let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
-        // Start a long-running process
+        // Give a moment for cleanup to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Start a long-running process with unique command
         let run_params1 = Parameters(RunParams {
-            command: "sleep 30".to_string(),
+            command: "sleep 200".to_string(),
         });
         let result1 = server.run(run_params1).await;
 
         // The first process should start successfully
+        if let Err(ref e) = result1 {
+            eprintln!("Error running first process: {:?}", e);
+        }
         assert!(result1.is_ok(), "First process should start successfully");
 
         // Extract the process_id from the result
@@ -512,7 +521,7 @@ mod tests {
         // Try to start another process with the same command (same process ID)
         // This should fail because the process already exists
         let run_params2 = Parameters(RunParams {
-            command: "sleep 30".to_string(),
+            command: "sleep 200".to_string(),
         });
         let result2 = server.run(run_params2).await;
 

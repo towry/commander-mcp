@@ -150,7 +150,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run tests
-        run: cargo test --all-features --verbose
+        run: cargo test --all-features --verbose -- --test-threads=1
 
   bench:
     name: benchmarks
