@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.2](https://github.com/towry/commander-mcp/compare/v0.2.1...v0.2.2) (2025-10-04)
+
+
+### Bug Fixes
+
+* add early failure detection and logs to run tool response ([#18](https://github.com/towry/commander-mcp/issues/18)) ([d0babac](https://github.com/towry/commander-mcp/commit/d0babacd22e981718721e5983cca6ce9cbb5c7b5))
+* add empty parameter structs for kill_all and list tools to fix JSON schema validation ([#16](https://github.com/towry/commander-mcp/issues/16)) ([592bc53](https://github.com/towry/commander-mcp/commit/592bc5331d417b06906d59a0b35b160511bd2d69))
+* disable auto-restart, improve process exit status detection with multi-attempt verification, add version flag, cleanup on exit, and isolate state per directory ([#20](https://github.com/towry/commander-mcp/issues/20)) ([ae960f9](https://github.com/towry/commander-mcp/commit/ae960f9e310f8586cc136163c77948854f7c7b53))
+* install script now always downloads and updates to latest version ([#11](https://github.com/towry/commander-mcp/issues/11)) ([15bd6f3](https://github.com/towry/commander-mcp/commit/15bd6f3ee6c6d813e12f03966a92db0b1a1a6f30))
+* update tool responses to use structured_content per MCP spec ([#14](https://github.com/towry/commander-mcp/issues/14)) ([eba4c6d](https://github.com/towry/commander-mcp/commit/eba4c6ddaf6ff4d14085935b64c064b1e923f5d3))
+
 ## [0.2.1](https://github.com/towry/commander-mcp/compare/v0.2.0...v0.2.1) (2025-10-03)
 
 
