@@ -255,6 +255,9 @@ mod tests {
             command: "sleep 5".to_string(),
         });
         let result = server.run(run_params).await;
+        if let Err(ref e) = result {
+            eprintln!("Error running command: {:?}", e);
+        }
         assert!(result.is_ok(), "Should be able to run a command");
 
         // List processes to verify it shows up

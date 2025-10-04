@@ -126,7 +126,33 @@ impl ProcessManager {
     fn pid_exists(pid: u32) -> bool {
         #[cfg(target_os = "linux")]
         {
-            std::path::Path::new(&format!("/proc/{}", pid)).exists()
+            // Check if /proc/{pid} exists
+            let proc_path = format!("/proc/{}", pid);
+            if !std::path::Path::new(&proc_path).exists() {
+                return false;
+            }
+
+            // Also check if the process is a zombie by reading /proc/{pid}/stat
+            // Zombie processes still exist in /proc but should be considered as "not existing"
+            // for our purposes since they can't actually run
+            let stat_path = format!("{}/stat", proc_path);
+            if let Ok(stat_content) = std::fs::read_to_string(&stat_path) {
+                // The stat file format is: pid (comm) state ...
+                // We need to find the state character after the command name in parentheses
+                // The state is a single character: Z for zombie
+                if let Some(state_start) = stat_content.rfind(')') {
+                    // State is the next non-whitespace character after the closing paren
+                    let remaining = &stat_content[state_start + 1..];
+                    if let Some(state_char) = remaining.trim_start().chars().next() {
+                        // If the process is a zombie, consider it as not existing
+                        if state_char == 'Z' {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            true
         }
 
         #[cfg(unix)]
@@ -238,26 +264,36 @@ impl ProcessManager {
 
                     if let Some(status) = process_status {
                         // Check if process state indicates failure
-                        let state_failed = matches!(
-                            status.state,
-                            pmdaemon::ProcessState::Errored | pmdaemon::ProcessState::Stopped
-                        );
+                        // Note: Stopped state by itself doesn't mean failure - process might have completed successfully
+                        // We check exit_code separately to determine if it was a failure
+                        let state_failed = matches!(status.state, pmdaemon::ProcessState::Errored);
 
-                        // Check if PID is gone (process exited)
-                        let pid_gone = status.pid.is_none();
+                        // Check if process has exited with a non-zero exit code
+                        // This is the PRIMARY check for failure
+                        let has_error_exit_code = status.exit_code.is_some_and(|code| code != 0);
 
                         // Check if PID exists in system (if we have a PID)
-                        let pid_not_exists = if let Some(pid) = status.pid {
-                            !Self::pid_exists(pid)
+                        // This catches zombie processes or processes that crashed without reporting exit code yet
+                        // IMPORTANT: Only consider this a failure if we don't have an exit code yet
+                        // If we have exit code 0, the process completed successfully even if PID is gone
+                        let pid_not_exists_without_exit_code = if status.exit_code.is_none() {
+                            if let Some(pid) = status.pid {
+                                !Self::pid_exists(pid)
+                            } else {
+                                // PID is None but no exit code yet - process might have crashed
+                                true
+                            }
                         } else {
+                            // We have an exit code, so use that to determine success/failure
                             false
                         };
 
-                        // Check if process has exited with a non-zero exit code
-                        let has_error_exit_code = status.exit_code.is_some_and(|code| code != 0);
-
+                        // A process has failed if:
+                        // 1. PMDaemon marked it as Errored, OR
+                        // 2. It exited with a non-zero exit code, OR
+                        // 3. The PID doesn't exist but we don't have an exit code yet (crashed)
                         let has_failed =
-                            state_failed || pid_gone || pid_not_exists || has_error_exit_code;
+                            state_failed || has_error_exit_code || pid_not_exists_without_exit_code;
 
                         if has_failed {
                             // Get logs to include in error message
