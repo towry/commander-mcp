@@ -1,0 +1,68 @@
+name: "Pre Release"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/alpha-release.yml'
+  workflow_dispatch:
+
+# Prevent running on release-please commits and version tags
+# This ensures alpha releases only happen for actual code changes
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  create_pre_release:
+    name: Create Pre Release
+    runs-on: ubuntu-latest
+    # Skip if commit message starts with "chore(main): release" (release-please)
+    if: "!startsWith(github.event.head_commit.message, 'chore(main): release')"
+    outputs:
+      tag_name: ${{ steps.generate_tag.outputs.tag_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate alpha tag
+        id: generate_tag
+        run: |
+          short_sha=$(git rev-parse --short HEAD)
+          tag_name="pre-release"
+          echo "tag_name=${tag_name}" >> $GITHUB_OUTPUT
+          echo "short_sha=${short_sha}" >> $GITHUB_OUTPUT
+
+      - name: Delete existing pre-release
+        run: |
+          gh release delete ${{ steps.generate_tag.outputs.tag_name }} --cleanup-tag --yes --repo $GITHUB_REPOSITORY || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create pre-release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.generate_tag.outputs.tag_name }}
+          name: "Pre-release (tip: ${{ steps.generate_tag.outputs.short_sha }})"
+          body: |
+            Latest pre-release build from main branch.
+            Commit: ${{ steps.generate_tag.outputs.short_sha }}
+            Do not use in production.
+          prerelease: true
+          draft: false
+
+  build_artifacts:
+    name: Build Artifacts for Pre Release
+    needs: create_pre_release
+    uses: ./.github/workflows/build-artifacts.yml
+    with:
+      tag_name: ${{ needs.create_pre_release.outputs.tag_name }}
