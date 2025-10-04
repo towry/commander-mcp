@@ -95,12 +95,15 @@ impl ProcessManager {
         // Generate a simple process name from the command
         let process_id = self.generate_process_id(command);
 
-        let config = ProcessConfig::builder()
+        let mut config = ProcessConfig::builder()
             .name(&process_id)
             .script(&script)
             .args(args)
             .build()
             .context("Failed to build process config")?;
+
+        // Disable auto-restart - we want to detect failures immediately
+        config.autorestart = false;
 
         let mut daemon = self.daemon.lock().await;
 
@@ -115,62 +118,53 @@ impl ProcessManager {
                 // Wait 1 second to detect early failures
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-                // Check if the process has failed (check multiple times)
-                for attempt in 0..3 {
-                    let processes = daemon.list().await?;
-                    let process_status = processes.iter().find(|p| p.name == process_id);
+                // Check if the process has failed
+                let processes = daemon.list().await?;
+                let process_status = processes.iter().find(|p| p.name == process_id);
 
-                    if let Some(status) = process_status {
-                        // If process is in errored or stopped state, has no PID (exited),
-                        // or has already restarted (indicating it crashed), it failed
-                        let has_failed = matches!(
-                            status.state,
-                            pmdaemon::ProcessState::Errored | pmdaemon::ProcessState::Stopped
-                        ) || status.pid.is_none()
-                            || status.restarts > 0;
+                if let Some(status) = process_status {
+                    // If process is in errored or stopped state, or has no PID (exited), it failed
+                    let has_failed = matches!(
+                        status.state,
+                        pmdaemon::ProcessState::Errored | pmdaemon::ProcessState::Stopped
+                    ) || status.pid.is_none();
 
-                        if has_failed {
-                            // Get logs to include in error message
-                            let logs = daemon.get_logs(&process_id, 100).await.unwrap_or_default();
-
-                            // Clean up the failed process
-                            let _ = daemon.delete(&process_id).await;
-                            drop(daemon);
-
-                            // Remove from command tracking
-                            let mut commands = self.commands.lock().await;
-                            commands.remove(&process_id);
-                            drop(commands);
-
-                            return Err(anyhow!(
-                                "Process '{}' failed to start. Logs:\n{}",
-                                process_id,
-                                logs
-                            ));
-                        }
-                    } else {
-                        // Process not found in list - it may have exited
+                    if has_failed {
+                        // Get logs to include in error message
                         let logs = daemon.get_logs(&process_id, 100).await.unwrap_or_default();
 
-                        // Clean up
+                        // Clean up the failed process
                         let _ = daemon.delete(&process_id).await;
                         drop(daemon);
 
+                        // Remove from command tracking
                         let mut commands = self.commands.lock().await;
                         commands.remove(&process_id);
                         drop(commands);
 
                         return Err(anyhow!(
-                            "Process '{}' failed to start (not found in process list). Logs:\n{}",
+                            "Process '{}' failed to start. Logs:\n{}",
                             process_id,
                             logs
                         ));
                     }
+                } else {
+                    // Process not found in list - it may have exited
+                    let logs = daemon.get_logs(&process_id, 100).await.unwrap_or_default();
 
-                    // If we haven't found an issue and this isn't the last attempt, wait a bit more
-                    if attempt < 2 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    }
+                    // Clean up
+                    let _ = daemon.delete(&process_id).await;
+                    drop(daemon);
+
+                    let mut commands = self.commands.lock().await;
+                    commands.remove(&process_id);
+                    drop(commands);
+
+                    return Err(anyhow!(
+                        "Process '{}' failed to start (not found in process list). Logs:\n{}",
+                        process_id,
+                        logs
+                    ));
                 }
 
                 // Get initial logs to include in response
