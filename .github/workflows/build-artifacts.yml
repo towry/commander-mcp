@@ -55,15 +55,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Disable man-db triggers (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          # https://github.com/actions/runner-images/issues/10977
-          # Disables man-db triggers, which have been a cause of huge (but variable) delays in github action jobs
-          # completing; we're seeing pauses on this step of 120+ seconds in some rare cases.
-          echo "set man-db/auto-update false" | sudo debconf-communicate
-          sudo dpkg-reconfigure man-db
-
       - name: Set binary name
         shell: bash
         run: |
@@ -85,42 +76,20 @@ jobs:
           fi
           echo "Using binary name: $BIN_NAME"
 
-      - name: Install deps (Linux)
-        if: runner.os == 'Linux'
-        uses: awalsh128/cache-apt-pkgs-action@latest
+      - name: Build and package
+        id: build
+        uses: ./.github/actions/build-rust
         with:
-          packages: libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libspeechd-dev libxkbcommon-dev libssl-dev libgtk-3-dev
-          version: 1.0
-
-      - name: Install toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
           target: ${{ matrix.target }}
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }} --verbose
-
-      - name: Package
-        shell: bash
-        run: |
-          version="${VERSION#v}" # strip leading v
-          staging="${BIN_NAME}-${version}-${{ matrix.target }}"
-          mkdir -p "$staging"
-          cp README.md "$staging/"
-          # Use the actual binary name from Cargo.toml
-          cp target/${{ matrix.target }}/release/${BIN_NAME} "$staging/${BIN_NAME}"
-          tar czf "$staging.tar.gz" "$staging"
-          echo "ASSET=$staging.tar.gz" >> $GITHUB_ENV
+          toolchain: ${{ matrix.rust }}
+          bin_name: ${{ env.BIN_NAME }}
+          version: ${{ env.VERSION }}
 
       - name: Upload asset
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.VERSION }}
-          artifacts: ${{ env.ASSET }}
+          artifacts: ${{ steps.build.outputs.asset_path }}
           allowUpdates: true
           omitBodyDuringUpdate: true
           omitNameDuringUpdate: true

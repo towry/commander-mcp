@@ -17,6 +17,7 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      upload_url: ${{ steps.release.outputs.upload_url }}
     steps:
       - name: Run release-please
         id: release
@@ -24,8 +25,6 @@ jobs:
         with:
           token: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }} # optional PAT to allow other workflows to run
           release-type: rust
-          target-branch: main
-          github-api-url: https://api.github.com
   build_artifacts:
     name: Build Artifacts (reusable)
     needs: release_please
