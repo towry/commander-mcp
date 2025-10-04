@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/towry/commander-mcp/compare/v0.2.2...v0.2.3) (2025-10-04)
+
+
+### Bug Fixes
+
+* terminate entire process tree when killing processes or shutting down server ([#22](https://github.com/towry/commander-mcp/issues/22)) ([2201d91](https://github.com/towry/commander-mcp/commit/2201d91e0d5ef96243504912658be5406123fa4e))
+
 ## [0.2.2](https://github.com/towry/commander-mcp/compare/v0.2.1...v0.2.2) (2025-10-04)
 
 
