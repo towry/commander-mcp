@@ -129,22 +129,12 @@ impl ProcessManager {
             std::path::Path::new(&format!("/proc/{}", pid)).exists()
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_os = "linux"))]
         {
-            // On macOS, use kill with signal 0 via libc
-            unsafe { libc::kill(pid as i32, 0) == 0 }
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            // On Windows, we could use Process API but for now just check if it's in the list
-            // This is a limitation - we'll rely on stopped/errored status instead
-            true
-        }
-
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        {
-            // For other platforms, assume the process exists
+            // On non-Linux platforms (macOS, Windows, etc.), we don't have a simple
+            // way to check if a PID exists without additional dependencies.
+            // We'll rely on the process state (stopped/errored) instead.
+            // This is a conservative approach - assume the process might still exist.
             true
         }
     }
