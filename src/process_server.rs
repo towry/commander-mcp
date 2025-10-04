@@ -80,6 +80,13 @@ impl ProcessServer {
         })
     }
 
+    /// Cleanup all processes on shutdown
+    pub async fn cleanup(&self) -> Result<(), McpError> {
+        self.manager.cleanup().await.map_err(|e| {
+            McpError::internal_error(format!("Failed to cleanup processes: {}", e), None)
+        })
+    }
+
     /// Run a command in the background
     #[tool(
         description = "Run a command in the background. Returns the process ID that can be used with other tools."
@@ -248,6 +255,9 @@ mod tests {
             command: "sleep 5".to_string(),
         });
         let result = server.run(run_params).await;
+        if let Err(ref e) = result {
+            eprintln!("Error running command: {:?}", e);
+        }
         assert!(result.is_ok(), "Should be able to run a command");
 
         // List processes to verify it shows up
@@ -474,5 +484,42 @@ mod tests {
         } else {
             panic!("Should return error for command that fails immediately, but got success");
         }
+    }
+
+    #[tokio::test]
+    async fn test_run_detects_duplicate_process() {
+        let server = ProcessServer::new().await.unwrap();
+
+        // Clean up any leftover processes from previous tests
+        let _ = server.kill_all(Parameters(KillAllParams {})).await;
+
+        // Start a long-running process
+        let run_params1 = Parameters(RunParams {
+            command: "sleep 30".to_string(),
+        });
+        let result1 = server.run(run_params1).await;
+
+        // The first process should start successfully
+        assert!(result1.is_ok(), "First process should start successfully");
+
+        // Extract the process_id from the result
+        let process_id = if let Ok(response) = result1 {
+            response.0.process_id.clone()
+        } else {
+            panic!("Should have gotten a successful response");
+        };
+
+        // Try to start another process with the same command (same process ID)
+        // This should fail because the process already exists
+        let run_params2 = Parameters(RunParams {
+            command: "sleep 30".to_string(),
+        });
+        let result2 = server.run(run_params2).await;
+
+        // Should return an error due to duplicate process ID
+        assert!(result2.is_err(), "Second process with same ID should fail");
+
+        // Clean up using the actual process_id
+        let _ = server.kill(Parameters(KillParams { process_id })).await;
     }
 }

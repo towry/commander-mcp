@@ -72,14 +72,140 @@ pub struct ProcessManager {
 
 impl ProcessManager {
     pub async fn new() -> Result<Self> {
-        let daemon = PmDaemon::new()
+        // Set PMDAEMON_HOME to current working directory to isolate state per directory
+        // This prevents state from persisting across different working directories
+        if std::env::var("PMDAEMON_HOME").is_err() {
+            let cwd = std::env::current_dir().context("Failed to get current directory")?;
+            let pmdaemon_dir = cwd.join(".pmdaemon");
+            std::env::set_var("PMDAEMON_HOME", pmdaemon_dir);
+        }
+
+        let mut daemon = PmDaemon::new()
             .await
             .context("Failed to initialize PMDaemon")?;
+
+        // Clean up stale processes on startup (processes with non-existent PIDs)
+        // This handles cases where the server crashed without cleanup
+        let processes = daemon.list().await.context("Failed to list processes")?;
+        let mut stale_count = 0;
+
+        for process in processes {
+            // Check if the process is stopped or errored, or if PID doesn't exist
+            let is_stale = matches!(
+                process.state,
+                pmdaemon::ProcessState::Stopped | pmdaemon::ProcessState::Errored
+            ) || process.pid.is_none()
+                || (process.pid.is_some() && !Self::pid_exists(process.pid.unwrap()));
+
+            if is_stale {
+                tracing::info!(
+                    "Removing stale process '{}' (PID: {:?}, state: {:?})",
+                    process.name,
+                    process.pid,
+                    process.state
+                );
+                if let Err(e) = daemon.delete(&process.name).await {
+                    tracing::warn!("Failed to delete stale process '{}': {}", process.name, e);
+                } else {
+                    stale_count += 1;
+                }
+            }
+        }
+
+        if stale_count > 0 {
+            tracing::info!("Cleaned up {} stale process(es) on startup", stale_count);
+        }
 
         Ok(Self {
             daemon: Arc::new(Mutex::new(daemon)),
             commands: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// Check if a PID exists
+    fn pid_exists(pid: u32) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            // Check if /proc/{pid} exists
+            let proc_path = format!("/proc/{}", pid);
+            if !std::path::Path::new(&proc_path).exists() {
+                return false;
+            }
+
+            // Also check if the process is a zombie by reading /proc/{pid}/stat
+            // Zombie processes still exist in /proc but should be considered as "not existing"
+            // for our purposes since they can't actually run
+            let stat_path = format!("{}/stat", proc_path);
+            if let Ok(stat_content) = std::fs::read_to_string(&stat_path) {
+                // The stat file format is: pid (comm) state ...
+                // We need to find the state character after the command name in parentheses
+                // The state is a single character: Z for zombie
+                if let Some(state_start) = stat_content.rfind(')') {
+                    // State is the next non-whitespace character after the closing paren
+                    let remaining = &stat_content[state_start + 1..];
+                    if let Some(state_char) = remaining.trim_start().chars().next() {
+                        // If the process is a zombie, consider it as not existing
+                        if state_char == 'Z' {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            true
+        }
+
+        #[cfg(unix)]
+        #[cfg(not(target_os = "linux"))]
+        {
+            // On Unix-like systems (macOS, BSD, etc.), use kill with signal 0
+            // kill(pid, 0) returns 0 if the process exists and we have permission
+            unsafe { libc::kill(pid as i32, 0) == 0 }
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, try to open the process handle
+            // This is a simplified check - process might exist but we lack permissions
+            use std::ptr;
+            const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+            unsafe {
+                let handle = winapi::um::processthreadsapi::OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION,
+                    0,
+                    pid,
+                );
+                if handle == ptr::null_mut() {
+                    false
+                } else {
+                    winapi::um::handleapi::CloseHandle(handle);
+                    true
+                }
+            }
+        }
+    }
+
+    /// Cleanup all processes on shutdown
+    pub async fn cleanup(&self) -> Result<()> {
+        tracing::info!("Cleaning up all processes on shutdown");
+        let mut daemon = self.daemon.lock().await;
+
+        // Delete all processes from PMDaemon
+        let deleted_count = daemon
+            .delete_all()
+            .await
+            .context("Failed to delete all processes during cleanup")?;
+
+        drop(daemon);
+
+        // Clear command tracking
+        let mut commands = self.commands.lock().await;
+        commands.clear();
+        drop(commands);
+
+        tracing::info!("Cleaned up {} process(es)", deleted_count);
+        Ok(())
     }
 
     /// Run a command and return the process ID
@@ -95,12 +221,16 @@ impl ProcessManager {
         // Generate a simple process name from the command
         let process_id = self.generate_process_id(command);
 
-        let config = ProcessConfig::builder()
+        let mut config = ProcessConfig::builder()
             .name(&process_id)
             .script(&script)
             .args(args)
             .build()
             .context("Failed to build process config")?;
+
+        // Disable auto-restart - we want to detect failures immediately
+        config.autorestart = false;
+        config.max_restarts = 0; // Ensure no restarts happen at all
 
         let mut daemon = self.daemon.lock().await;
 
@@ -112,33 +242,97 @@ impl ProcessManager {
                 commands.insert(process_id.clone(), command.to_string());
                 drop(commands);
 
-                // Wait 1 second to detect early failures
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                // Wait and check multiple times to detect early failures
+                // CRITICAL: PMDaemon doesn't automatically update process status in background!
+                // The exit_code field is only updated when check_status() is called on each process.
+                // We must explicitly call check_all_processes() before each check to trigger updates.
+                let mut check_attempts = 0;
+                let max_attempts = 5; // Check for up to 5 seconds
 
-                // Check if the process has failed
-                let processes = daemon.list().await?;
-                let process_status = processes.iter().find(|p| p.name == process_id);
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    check_attempts += 1;
 
-                if let Some(status) = process_status {
-                    // If process is in errored or stopped state, it failed
-                    if matches!(
-                        status.state,
-                        pmdaemon::ProcessState::Errored | pmdaemon::ProcessState::Stopped
-                    ) {
-                        // Get logs to include in error message
+                    // CRITICAL: PMDaemon doesn't automatically update process status in background
+                    // We need to explicitly call check_all_processes() to trigger status updates
+                    // This calls check_status() on each process which updates exit_code and state
+                    let _ = daemon.check_all_processes().await;
+
+                    // Now get the updated process list
+                    let processes = daemon.list().await?;
+                    let process_status = processes.iter().find(|p| p.name == process_id);
+
+                    if let Some(status) = process_status {
+                        // Check if process state indicates failure
+                        // Note: Stopped state by itself doesn't mean failure - process might have completed successfully
+                        // We check exit_code separately to determine if it was a failure
+                        let state_failed = matches!(status.state, pmdaemon::ProcessState::Errored);
+
+                        // Check if process has exited with a non-zero exit code
+                        // This is the PRIMARY check for failure
+                        let has_error_exit_code = status.exit_code.is_some_and(|code| code != 0);
+
+                        // Check if PID exists in system (if we have a PID)
+                        // This catches zombie processes or processes that crashed without reporting exit code yet
+                        // IMPORTANT: Only consider this a failure if we don't have an exit code yet
+                        // If we have exit code 0, the process completed successfully even if PID is gone
+                        let pid_not_exists_without_exit_code = if status.exit_code.is_none() {
+                            if let Some(pid) = status.pid {
+                                !Self::pid_exists(pid)
+                            } else {
+                                // PID is None but no exit code yet - process might have crashed
+                                true
+                            }
+                        } else {
+                            // We have an exit code, so use that to determine success/failure
+                            false
+                        };
+
+                        // A process has failed if:
+                        // 1. PMDaemon marked it as Errored, OR
+                        // 2. It exited with a non-zero exit code, OR
+                        // 3. The PID doesn't exist but we don't have an exit code yet (crashed)
+                        let has_failed =
+                            state_failed || has_error_exit_code || pid_not_exists_without_exit_code;
+
+                        if has_failed {
+                            // Get logs to include in error message
+                            let logs = daemon.get_logs(&process_id, 100).await.unwrap_or_default();
+
+                            // Clean up the failed process
+                            let _ = daemon.delete(&process_id).await;
+                            drop(daemon);
+
+                            // Remove from command tracking
+                            let mut commands = self.commands.lock().await;
+                            commands.remove(&process_id);
+                            drop(commands);
+
+                            return Err(anyhow!(
+                                "Process '{}' failed to start. Logs:\n{}",
+                                process_id,
+                                logs
+                            ));
+                        }
+
+                        // If process appears healthy and we've checked enough times, consider it started
+                        if check_attempts >= max_attempts {
+                            break;
+                        }
+                    } else {
+                        // Process not found in list - it may have exited
                         let logs = daemon.get_logs(&process_id, 100).await.unwrap_or_default();
 
-                        // Clean up the failed process
+                        // Clean up
                         let _ = daemon.delete(&process_id).await;
                         drop(daemon);
 
-                        // Remove from command tracking
                         let mut commands = self.commands.lock().await;
                         commands.remove(&process_id);
                         drop(commands);
 
                         return Err(anyhow!(
-                            "Process '{}' failed to start. Logs:\n{}",
+                            "Process '{}' failed to start (not found in process list). Logs:\n{}",
                             process_id,
                             logs
                         ));
