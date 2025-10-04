@@ -484,41 +484,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_detects_port_conflict() {
+    async fn test_run_detects_duplicate_process() {
         let server = ProcessServer::new().await.unwrap();
 
         // Clean up any leftover processes from previous tests
         let _ = server.kill_all(Parameters(KillAllParams {})).await;
 
-        // First, start a server on a specific port
+        // Start a long-running process
         let run_params1 = Parameters(RunParams {
-            command: "python3 -m http.server 9999".to_string(),
+            command: "sleep 30".to_string(),
         });
         let result1 = server.run(run_params1).await;
 
-        // The first server should start successfully
-        assert!(result1.is_ok(), "First server should start successfully");
+        // The first process should start successfully
+        assert!(result1.is_ok(), "First process should start successfully");
 
-        // Give it a moment to bind to the port
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        // Extract the process_id from the result
+        let process_id = if let Ok(response) = result1 {
+            response.0.process_id.clone()
+        } else {
+            panic!("Should have gotten a successful response");
+        };
 
-        // Now try to start another server on the same port - should fail
+        // Try to start another process with the same command (same process ID)
+        // This should fail because the process already exists
         let run_params2 = Parameters(RunParams {
-            command: "python3 -m http.server 9999".to_string(),
+            command: "sleep 30".to_string(),
         });
         let result2 = server.run(run_params2).await;
 
-        // Should return an error due to port conflict
-        // This should either fail because:
-        // 1. Process with same ID already exists
-        // 2. Process exits due to port conflict (if we use different command to generate different ID)
-        assert!(result2.is_err(), "Second server on same port should fail");
+        // Should return an error due to duplicate process ID
+        assert!(result2.is_err(), "Second process with same ID should fail");
 
-        // Clean up
-        let _ = server
-            .kill(Parameters(KillParams {
-                process_id: "python3".to_string(),
-            }))
-            .await;
+        // Clean up using the actual process_id
+        let _ = server.kill(Parameters(KillParams { process_id })).await;
     }
 }

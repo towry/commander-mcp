@@ -69,10 +69,16 @@ async fn main() -> Result<()> {
         std::process::exit(0);
     });
 
-    let service = server.serve(stdio()).await.inspect_err(|e| {
+    let service = server.clone().serve(stdio()).await.inspect_err(|e| {
         tracing::error!("serving error: {:?}", e);
     })?;
 
     service.waiting().await?;
+
+    // Cleanup all processes on normal exit
+    if let Err(e) = server.cleanup().await {
+        tracing::error!("Error during cleanup on exit: {:?}", e);
+    }
+
     Ok(())
 }
