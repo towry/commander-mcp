@@ -490,10 +490,7 @@ mod tests {
         let result1 = server.run(run_params1).await;
 
         // The first server should start successfully
-        assert!(
-            result1.is_ok(),
-            "First server should start successfully"
-        );
+        assert!(result1.is_ok(), "First server should start successfully");
 
         // Give it a moment to bind to the port
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -508,10 +505,7 @@ mod tests {
         // This should either fail because:
         // 1. Process with same ID already exists
         // 2. Process exits due to port conflict (if we use different command to generate different ID)
-        assert!(
-            result2.is_err(),
-            "Second server on same port should fail"
-        );
+        assert!(result2.is_err(), "Second server on same port should fail");
 
         // Clean up
         let _ = server
